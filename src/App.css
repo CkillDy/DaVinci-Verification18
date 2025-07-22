@@ -1,0 +1,384 @@
+/* Reset básico */
+* {
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fundo geral */
+body {
+  background: #121212;
+  color: #ddd;
+  min-height: 100vh;
+}
+
+/* Container principal */
+.app {
+  max-width: 600px;
+  margin: 30px auto;
+  background: #1e1e2f;
+  border-radius: 12px;
+  padding: 30px 25px;
+  box-shadow:
+    0 8px 16px rgb(0 0 0 / 0.7),
+    inset 0 0 50px rgb(255 0 128 / 0.15);
+}
+
+/* Título */
+h1 {
+  font-size: 2.2rem;
+  text-align: center;
+  margin-bottom: 25px;
+  font-weight: 700;
+  color: #ff4081;
+  text-shadow: 0 0 8px #ff4081;
+}
+
+/* Etapas */
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Inputs */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
+input[type="password"],
+input[type="file"] {
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1.5px solid #333652;
+  background-color: #292a44;
+  color: #eee;
+  font-size: 16px;
+  width: 100%;
+  outline-offset: 2px;
+  outline-color: transparent;
+  box-shadow: inset 0 0 8px rgb(255 64 129 / 0.15);
+  transition: border-color 0.3s ease, outline-color 0.3s ease;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="tel"]:focus,
+input[type="password"]:focus,
+input[type="file"]:focus {
+  border-color: #ff4081;
+  outline-color: #ff4081;
+  box-shadow: 0 0 10px #ff4081;
+  background-color: #3b3a5b;
+  color: white;
+}
+
+/* Checkbox label */
+label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #ff77a9;
+}
+
+/* Botões */
+button {
+  padding: 12px 25px;
+  border-radius: 10px;
+  border: none;
+  background-color: #ff4081;
+  color: white;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgb(255 64 129 / 0.5);
+  transition: background-color 0.25s ease, box-shadow 0.3s ease, transform 0.2s ease;
+  user-select: none;
+  align-self: flex-start;
+}
+
+button:disabled {
+  background-color: #660033;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+button:hover:not(:disabled) {
+  background-color: #ff1c6a;
+  box-shadow: 0 6px 20px rgb(255 28 106 / 0.7);
+  transform: translateY(-2px);
+}
+
+/* Botão Voltar diferente */
+button.voltar {
+  background-color: #444669;
+  box-shadow: 0 4px 10px rgb(68 70 105 / 0.7);
+}
+
+button.voltar:hover {
+  background-color: #606488;
+  box-shadow: 0 6px 16px rgb(96 100 136 / 0.8);
+  transform: translateY(-2px);
+}
+
+/* Botão remover imagem */
+button.remove {
+  background-color: #cc0033;
+  box-shadow: 0 4px 12px rgb(204 0 51 / 0.7);
+}
+
+button.remove:hover {
+  background-color: #ff3355;
+  box-shadow: 0 6px 16px rgb(255 51 85 / 0.9);
+  transform: translateY(-2px);
+}
+
+/* Erros */
+.error {
+  color: #ff3366;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: -10px;
+  margin-bottom: 6px;
+  text-shadow: 0 0 5px #ff3366aa;
+}
+
+/* Texto warning */
+.step p strong {
+  color: #ff4081;
+}
+
+/* Lista personalizada */
+.step ul {
+  list-style: none;
+  padding-left: 20px;
+  margin-top: 8px;
+  color: #ff77a9;
+}
+
+.step ul li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.step ul li::before {
+  content: '▹';
+  position: absolute;
+  left: 0;
+  color: #ff4081;
+  font-weight: bold;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Waiting screen */
+.step.waiting {
+  text-align: center;
+  font-size: 1.2rem;
+  color: #ff77a9;
+  text-shadow: 0 0 10px #ff4081;
+}
+
+/* Área admin */
+.admin {
+  background: #121212;
+  max-width: 900px;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow:
+    0 12px 24px rgb(0 0 0 / 0.85),
+    inset 0 0 60px rgb(255 0 128 / 0.2);
+  color: #eee;
+}
+
+/* Login admin */
+.admin-login {
+  max-width: 320px;
+  margin: 0 auto 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Botão admin */
+.btn-admin {
+  margin-bottom: 25px;
+  background-color: #8a2be2;
+  box-shadow: 0 4px 14px rgb(138 43 226 / 0.7);
+}
+
+.btn-admin:hover {
+  background-color: #a055ff;
+  box-shadow: 0 6px 20px rgb(160 85 255 / 0.9);
+}
+
+/* Botão logout */
+.btn-logout {
+  background-color: #cc0033;
+  box-shadow: 0 4px 14px rgb(204 0 51 / 0.7);
+  margin-bottom: 25px;
+}
+
+.btn-logout:hover {
+  background-color: #ff3366;
+  box-shadow: 0 6px 20px rgb(255 51 102 / 0.9);
+}
+
+/* Lista de submissões */
+.submissions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-height: 75vh;
+  overflow-y: auto;
+  padding-right: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #ff4081 #1e1e2f;
+}
+
+/* Scrollbar customizada para Webkit */
+.submissions-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.submissions-list::-webkit-scrollbar-track {
+  background: #1e1e2f;
+  border-radius: 10px;
+}
+
+.submissions-list::-webkit-scrollbar-thumb {
+  background-color: #ff4081;
+  border-radius: 10px;
+  border: 2px solid #1e1e2f;
+}
+
+/* Card submissão */
+.submission-card {
+  border: 1px solid #444669;
+  border-radius: 14px;
+  padding: 18px 22px;
+  display: flex;
+  gap: 22px;
+  background-color: #292a44;
+  box-shadow: 0 0 12px rgb(255 64 129 / 0.15);
+  transition: border-color 0.3s ease, background-color 0.3s ease;
+}
+
+/* Status aprovado */
+.submission-card.status-aprovado {
+  border-color: #28a745;
+  background-color: #234723;
+  box-shadow: 0 0 12px rgb(40 167 69 / 0.6);
+}
+
+/* Status reprovado */
+.submission-card.status-reprovado {
+  border-color: #dc3545;
+  background-color: #5b1f21;
+  box-shadow: 0 0 12px rgb(220 53 69 / 0.7);
+}
+
+.info {
+  flex: 1;
+  font-size: 14px;
+  color: #ddd;
+  user-select: text;
+}
+
+.images {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.images img {
+  width: 140px;
+  height: auto;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1.5px solid #ff4081;
+  box-shadow: 0 0 10px rgb(255 64 129 / 0.6);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+}
+
+.actions button {
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  width: 90px;
+}
+
+.btn-approve {
+  background-color: #28a745;
+  box-shadow: 0 4px 16px rgb(40 167 69 / 0.75);
+}
+
+.btn-approve:hover {
+  background-color: #1f7a30;
+  box-shadow: 0 6px 22px rgb(31 122 48 / 0.9);
+}
+
+.btn-reject {
+  background-color: #dc3545;
+  box-shadow: 0 4px 16px rgb(220 53 69 / 0.8);
+}
+
+.btn-reject:hover {
+  background-color: #a52c30;
+  box-shadow: 0 6px 22px rgb(165 44 48 / 0.9);
+}
+
+/* Remove botão */
+.remove {
+  font-weight: 700;
+}
+
+/* Responsividade */
+@media (max-width: 640px) {
+  .app {
+    margin: 20px 15px;
+    padding: 25px 15px;
+  }
+
+  .submission-card {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .images {
+    flex-direction: row;
+    justify-content: center;
+  }
+
+  .images img {
+    width: 100px;
+  }
+
+  .actions {
+    flex-direction: row;
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  button {
+    width: 100%;
+    padding: 14px 0;
+  }
+}
