@@ -57,7 +57,7 @@ input[type="file"] {
   border-radius: 8px;
   border: 1.5px solid #333652;
   background-color: #292a44;
-  color: #f0f0f0;
+  color: #f8f8f8;
   font-size: 16px;
   width: 100%;
   outline-offset: 2px;
@@ -77,6 +77,11 @@ input[type="file"]:focus {
   box-shadow: 0 0 10px #ff4081;
   background-color: #3b3a5b;
   color: white;
+}
+/* Estilo para placeholder mais claro */
+input::placeholder {
+  color: #cccccc; /* ou tente #d8d8d8 ou #e0e0e0 */
+  opacity: 1; /* para garantir que fique visível */
 }
 
 /* Checkbox label */
