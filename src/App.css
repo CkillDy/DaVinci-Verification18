@@ -31,7 +31,8 @@ body {
 
 /* Título */
 h1 {
-  font-size: 2.1rem;
+  text-align: center;
+  font-size: 1.9rem;
   text-align: center;
   margin-bottom: 20px;
   font-weight: 700;
@@ -39,11 +40,16 @@ h1 {
   text-shadow: 0 0 8px #ff4081;
 }
 
+.btn-admin {
+  margin-bottom: 18px;
+}
+
 /* Etapas */
 .step {
   display: flex;
   flex-direction: column;
   gap: 18px;
+
 }
 
 /* Inputs */
@@ -90,6 +96,7 @@ label {
 
 /* Botões */
 button {
+  text-align: center;
   padding: 12px 25px;
   border-radius: 10px;
   border: none;
@@ -103,6 +110,7 @@ button {
   user-select: none;
   align-self: flex-start;
   margin-right: 10px;
+  margin-bottom: 13px;
 }
 
 button:disabled {
@@ -162,6 +170,7 @@ button.remove:hover {
   padding-left: 20px;
   margin-top: 8px;
   color: #ff77a9;
+  margin-bottom: 5px;
 }
 
 .step ul li {
@@ -169,6 +178,7 @@ button.remove:hover {
   padding-left: 20px;
   margin-bottom: 8px;
   font-weight: 600;
+  margin-bottom: 12px;
 }
 
 .step ul li::before {
@@ -470,6 +480,7 @@ button.remove:hover {
   button {
     width: 100%;
     padding: 14px 0;
+
   }
 }
 
