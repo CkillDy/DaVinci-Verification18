@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import './App.css'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import {
   saveSubmission,
@@ -13,883 +12,669 @@ import {
   deleteAllSubmissions,
   validateImageFile
 } from './supabase'
+import './App.css'
 
-// ⚠️ MOVA PARA VARIÁVEL DE AMBIENTE EM PRODUÇÃO
 const ADMIN_PASSWORD = 'picapau2020'
 
-const VALIDATION_RULES = {
+const RULES = {
   MIN_AGE: 18,
   MAX_AGE: 50,
-  EMAIL_REGEX: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-  PHONE_REGEX: /^\d{8,15}$/,
-  MAX_FILE_SIZE: 3 * 1024 * 1024
+  EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  PHONE: /^\d{8,15}$/
 }
 
-const STEPS = {
-  BASIC_INFO: 1,
-  DOCUMENTS: 2,
-  TERMS: 3,
-  ADMIN_LOGIN: 'admin-login',
-  ADMIN_PANEL: 'admin-panel',
-  WAITING: 'waiting',
-  RESULT: 'result'
+const S = {
+  INFO: 1, DOCS: 2, TERMS: 3,
+  WAITING: 'waiting', RESULT: 'result',
+  ADMIN_LOGIN: 'admin-login', ADMIN: 'admin'
 }
 
-// Hook personalizado para localStorage
-const useLocalStorage = (key, initialValue) => {
-  const [value, setValue] = useState(() => {
+const STEP_LABELS = ['Dados', 'Documentos', 'Termos']
+
+const getUserId = () => {
+  const existing = localStorage.getItem('uid')
+  if (existing) return existing
+  const id = uuidv4()
+  localStorage.setItem('uid', id)
+  return id
+}
+
+const usePersistedState = (key, initial) => {
+  const [val, setVal] = useState(() => {
     try {
       const item = localStorage.getItem(key)
-      return item ? JSON.parse(item) : initialValue
-    } catch {
-      return initialValue
-    }
+      return item ? JSON.parse(item) : initial
+    } catch { return initial }
   })
-
-  const setStoredValue = useCallback(
-    newValue => {
-      try {
-        setValue(newValue)
-        localStorage.setItem(key, JSON.stringify(newValue))
-      } catch (error) {
-        console.error(`Erro ao salvar ${key}:`, error)
-      }
-    },
-    [key]
-  )
-
-  return [value, setStoredValue]
+  const set = useCallback(v => {
+    setVal(v)
+    try { localStorage.setItem(key, JSON.stringify(v)) } catch { }
+  }, [key])
+  return [val, set]
 }
 
-// Hook para gerenciar userId
-const useUserId = () => {
-  const [userId] = useState(() => {
-    const existing = localStorage.getItem('userId')
-    if (existing) return existing
-    const newId = uuidv4()
-    localStorage.setItem('userId', newId)
-    return newId
-  })
-  return userId
+const SESSION_KEY = 'adm_session'
+const LOCKOUT_KEY = 'adm_lockout'
+const MAX_ATTEMPTS = 4
+const SESSION_TTL = 8 * 60 * 60 * 1000
+
+const getAdminSession = () => {
+  try {
+    const s = localStorage.getItem(SESSION_KEY)
+    if (!s) return false
+    const { ts } = JSON.parse(s)
+    if (Date.now() - ts > SESSION_TTL) { localStorage.removeItem(SESSION_KEY); return false }
+    return true
+  } catch { return false }
 }
 
-function App () {
-  const [step, setStep] = useState(STEPS.BASIC_INFO)
+const setAdminSession = () => {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ ts: Date.now() }))
+}
+
+const clearAdminSession = () => localStorage.removeItem(SESSION_KEY)
+
+const getLockout = () => {
+  try {
+    const l = localStorage.getItem(LOCKOUT_KEY)
+    if (!l) return { attempts: 0, lockedUntil: 0 }
+    return JSON.parse(l)
+  } catch { return { attempts: 0, lockedUntil: 0 } }
+}
+
+const setLockout = (data) => localStorage.setItem(LOCKOUT_KEY, JSON.stringify(data))
+
+const EMPTY_FORM = {
+  nome: '', idade: '', email: '', whatsapp: '',
+  fotoFrente: null, fotoVerso: null, termosAceitos: false
+}
+
+export default function App() {
+  const [step, setStep] = useState(() => getAdminSession() ? S.ADMIN : S.INFO)
   const [errors, setErrors] = useState({})
   const [loading, setLoading] = useState(false)
-  const [imagemModal, setImagemModal] = useState(null)
-  const userId = useUserId()
-
-  const initialForm = useMemo(
-    () => ({
-      nome: '',
-      idade: '',
-      email: '',
-      whatsapp: '',
-      fotoFrente: null,
-      fotoVerso: null,
-      termosAceitos: false
-    }),
-    []
-  )
-
-  const [formData, setFormData] = useLocalStorage('formData', initialForm)
-  const [previewFotoFrente, setPreviewFotoFrente] = useState(null)
-  const [previewFotoVerso, setPreviewFotoVerso] = useState(null)
-
-  const [isAdmin, setIsAdmin] = useLocalStorage('adminLogged', false)
-  const [adminPasswordInput, setAdminPasswordInput] = useState('')
+  const [modal, setModal] = useState(null)
+  const [formData, setFormData] = usePersistedState('fd', EMPTY_FORM)
+  const [previews, setPreviews] = useState({ frente: null, verso: null })
+  const [isAdmin, setIsAdmin] = useState(() => getAdminSession())
+  const [adminPwd, setAdminPwd] = useState('')
+  const [adminError, setAdminError] = useState('')
+  const [lockout, setLockoutState] = useState(() => getLockout())
   const [submissions, setSubmissions] = useState([])
-  const [submissionsLoading, setSubmissionsLoading] = useState(false)
-  const [filterStatus, setFilterStatus] = useState('all')
+  const [subsLoading, setSubsLoading] = useState(false)
+  const [filter, setFilter] = useState('all')
   const [myResult, setMyResult] = useState(null)
+  const userId = useMemo(() => getUserId(), [])
+  const hasSubmitted = useMemo(() => localStorage.getItem('submitted') === 'true', [])
 
-  const hasSubmitted = useMemo(
-    () => localStorage.getItem('submitted') === 'true',
-    []
-  )
+  const stats = useMemo(() => ({
+    total: submissions.length,
+    pendente: submissions.filter(s => s.status === 'pendente').length,
+    aprovado: submissions.filter(s => s.status === 'aprovado').length,
+    reprovado: submissions.filter(s => s.status === 'reprovado').length
+  }), [submissions])
 
-  // Filtra submissões por status
-  const filteredSubmissions = useMemo(() => {
-    if (filterStatus === 'all') return submissions
-    return submissions.filter(sub => sub.status === filterStatus)
-  }, [submissions, filterStatus])
+  const filtered = useMemo(() =>
+    filter === 'all' ? submissions : submissions.filter(s => s.status === filter),
+    [submissions, filter])
 
-  // Stats para o admin
-  const stats = useMemo(
-    () => ({
-      total: submissions.length,
-      pendente: submissions.filter(s => s.status === 'pendente').length,
-      aprovado: submissions.filter(s => s.status === 'aprovado').length,
-      reprovado: submissions.filter(s => s.status === 'reprovado').length
-    }),
-    [submissions]
-  )
+  const loadSubs = useCallback(async () => {
+    setSubsLoading(true)
+    const r = await fetchSubmissions({ limit: 100 })
+    if (r.success) setSubmissions(r.data)
+    setSubsLoading(false)
+  }, [])
 
-  // Carrega submissões
-  const loadSubmissions = useCallback(async () => {
+  const unsubRef = useRef(null)
+
+  useEffect(() => {
     if (!isAdmin) return
-
-    setSubmissionsLoading(true)
-    try {
-      const result = await fetchSubmissions({ limit: 100 })
-      if (result.success) {
-        setSubmissions(result.data)
+    loadSubs()
+    unsubRef.current = subscribeToSubmissions(p => {
+      if (p.eventType === 'INSERT') {
+        setSubmissions(prev => prev.some(s => s.id === p.new.id) ? prev : [p.new, ...prev])
+      } else if (p.eventType === 'UPDATE') {
+        setSubmissions(prev => prev.map(s => s.id === p.new.id ? p.new : s))
+      } else if (p.eventType === 'DELETE') {
+        const deletedId = p.old?.id ?? p.new?.id
+        if (deletedId) setSubmissions(prev => prev.filter(s => s.id !== deletedId))
       }
-    } catch (error) {
-      console.error('Erro ao carregar:', error)
-    } finally {
-      setSubmissionsLoading(false)
-    }
+    })
+    return () => { unsubRef.current?.(); unsubRef.current = null }
   }, [isAdmin])
 
-  // Subscription admin
   useEffect(() => {
-    if (!isAdmin) return
-
-    loadSubmissions()
-
-    const unsubscribe = subscribeToSubmissions(payload => {
-      if (payload.eventType === 'INSERT') {
-        setSubmissions(prev => [payload.new, ...prev])
-      } else if (payload.eventType === 'UPDATE') {
-        setSubmissions(prev =>
-          prev.map(sub => (sub.id === payload.new.id ? payload.new : sub))
-        )
-      } else if (payload.eventType === 'DELETE') {
-        setSubmissions(prev => prev.filter(sub => sub.id !== payload.old.id))
+    if (step !== S.WAITING) return
+    fetchUserSubmissions(userId, 1).then(r => {
+      if (r.success && r.data.length > 0 && r.data[0].status !== 'pendente') {
+        setMyResult(r.data[0].status)
+        setStep(S.RESULT)
       }
     })
-
-    return unsubscribe
-  }, [isAdmin, loadSubmissions])
-
-  // Subscription usuário
-  useEffect(() => {
-    if (step !== STEPS.WAITING) return
-
-    const checkUserResult = async () => {
-      try {
-        const result = await fetchUserSubmissions(userId, 1)
-        if (result.success && result.data.length > 0) {
-          const latest = result.data[0]
-          if (latest.status !== 'pendente') {
-            setMyResult(latest.status)
-            setStep(STEPS.RESULT)
-          }
-        }
-      } catch (error) {
-        console.error('Erro:', error)
-      }
-    }
-
-    checkUserResult()
-
-    const unsubscribe = subscribeToUserSubmissions(userId, payload => {
-      if (payload.eventType === 'UPDATE' && payload.new.status !== 'pendente') {
-        setMyResult(payload.new.status)
-        setStep(STEPS.RESULT)
+    return subscribeToUserSubmissions(userId, p => {
+      if (p.eventType === 'UPDATE' && p.new.status !== 'pendente') {
+        setMyResult(p.new.status)
+        setStep(S.RESULT)
       }
     })
-
-    return unsubscribe
   }, [step, userId])
 
   useEffect(() => {
-    if (hasSubmitted && step !== STEPS.WAITING && step !== STEPS.RESULT) {
-      setStep(STEPS.WAITING)
-    }
+    if (hasSubmitted && step !== S.WAITING && step !== S.RESULT) setStep(S.WAITING)
   }, [hasSubmitted, step])
 
-  const validateStep = useCallback(() => {
-    const newErrors = {}
-
-    if (step === STEPS.BASIC_INFO) {
-      if (!formData.nome.trim() || formData.nome.trim().length < 2) {
-        newErrors.nome = 'Nome deve ter pelo menos 2 caracteres'
-      }
-
-      const idade = parseInt(formData.idade, 10)
-      if (
-        !formData.idade ||
-        idade < VALIDATION_RULES.MIN_AGE ||
-        idade > VALIDATION_RULES.MAX_AGE
-      ) {
-        newErrors.idade = `Idade entre ${VALIDATION_RULES.MIN_AGE}-${VALIDATION_RULES.MAX_AGE}`
-      }
-
-      if (!VALIDATION_RULES.EMAIL_REGEX.test(formData.email)) {
-        newErrors.email = 'E-mail inválido'
-      }
-
-      if (
-        !VALIDATION_RULES.PHONE_REGEX.test(formData.whatsapp.replace(/\D/g, ''))
-      ) {
-        newErrors.whatsapp = 'WhatsApp inválido (8-15 dígitos)'
-      }
-    } else if (step === STEPS.DOCUMENTS) {
-      if (!formData.fotoFrente) newErrors.fotoFrente = 'Foto frente obrigatória'
-      if (!formData.fotoVerso) newErrors.fotoVerso = 'Foto verso obrigatória'
-    } else if (step === STEPS.TERMS) {
-      if (!formData.termosAceitos) newErrors.termosAceitos = 'Aceite os termos'
+  const validate = useCallback(() => {
+    const e = {}
+    if (step === S.INFO) {
+      if (!formData.nome.trim() || formData.nome.trim().length < 2) e.nome = 'Mínimo 2 caracteres'
+      const age = parseInt(formData.idade, 10)
+      if (!formData.idade || age < RULES.MIN_AGE || age > RULES.MAX_AGE) e.idade = 'Você precisa ter entre 18 e 50 anos'
+      if (!RULES.EMAIL.test(formData.email)) e.email = 'E-mail inválido'
+      if (!RULES.PHONE.test(formData.whatsapp.replace(/\D/g, ''))) e.whatsapp = 'Número inválido (8–15 dígitos)'
+    } else if (step === S.DOCS) {
+      if (!formData.fotoFrente) e.fotoFrente = 'Envie a frente do documento'
+      if (!formData.fotoVerso) e.fotoVerso = 'Envie o verso do documento'
+    } else if (step === S.TERMS) {
+      if (!formData.termosAceitos) e.termosAceitos = 'Você precisa aceitar os termos'
     }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    setErrors(e)
+    return Object.keys(e).length === 0
   }, [step, formData])
 
-  const handleChange = useCallback(
-    e => {
-      const { name, value, type, checked, files } = e.target
-
-      if (type === 'file') {
-        const file = files[0]
-        if (!file) return
-
-        const validation = validateImageFile(file)
-        if (!validation.valid) {
-          setErrors(prev => ({ ...prev, [name]: validation.error }))
-          return
-        }
-
-        setErrors(prev => {
-          const newErrors = { ...prev }
-          delete newErrors[name]
-          return newErrors
-        })
-
-        setFormData(prev => ({ ...prev, [name]: file }))
-
-        const reader = new FileReader()
-        reader.onloadend = () => {
-          if (name === 'fotoFrente') setPreviewFotoFrente(reader.result)
-          if (name === 'fotoVerso') setPreviewFotoVerso(reader.result)
-        }
-        reader.readAsDataURL(file)
-      } else if (type === 'checkbox') {
-        setFormData(prev => ({ ...prev, [name]: checked }))
-      } else {
-        const processedValue =
-          name === 'whatsapp' ? value.replace(/\D/g, '') : value
-        setFormData(prev => ({ ...prev, [name]: processedValue }))
-      }
-    },
-    [setFormData]
-  )
-
-  const removeImage = useCallback(
-    name => {
-      setFormData(prev => ({ ...prev, [name]: null }))
-      if (name === 'fotoFrente') setPreviewFotoFrente(null)
-      if (name === 'fotoVerso') setPreviewFotoVerso(null)
-    },
-    [setFormData]
-  )
-
-  const nextStep = useCallback(() => {
-    if (validateStep()) setStep(prev => prev + 1)
-  }, [validateStep])
-
-  const prevStep = useCallback(() => setStep(prev => prev - 1), [])
-
-  const handleSubmit = useCallback(
-    async e => {
-      e.preventDefault()
-      if (!validateStep() || loading) return
-
-      setLoading(true)
-      try {
-        const [frenteResult, versoResult] = await Promise.all([
-          uploadImage(formData.fotoFrente, null, userId),
-          uploadImage(formData.fotoVerso, null, userId)
-        ])
-
-        if (!frenteResult.success || !versoResult.success) {
-          throw new Error('Falha no upload')
-        }
-
-        const submissionData = {
-          nome: formData.nome.trim(),
-          idade: parseInt(formData.idade, 10),
-          email: formData.email.toLowerCase().trim(),
-          whatsapp: formData.whatsapp,
-          foto_frente: frenteResult.url,
-          foto_verso: versoResult.url
-        }
-
-        const saveResult = await saveSubmission(submissionData, userId)
-
-        if (!saveResult.success) {
-          throw new Error(saveResult.error || 'Falha ao salvar')
-        }
-
-        localStorage.setItem('submitted', 'true')
-        localStorage.removeItem('formData')
-        setStep(STEPS.WAITING)
-      } catch (error) {
-        alert(`Erro: ${error.message}`)
-      } finally {
-        setLoading(false)
-      }
-    },
-    [formData, userId, loading, validateStep]
-  )
-
-  const handleAdminLogin = useCallback(() => {
-    if (adminPasswordInput === ADMIN_PASSWORD) {
-      setIsAdmin(true)
-      setStep(STEPS.ADMIN_PANEL)
+  const handleChange = useCallback(e => {
+    const { name, value, type, checked, files } = e.target
+    if (type === 'file') {
+      const file = files[0]
+      if (!file) return
+      const v = validateImageFile(file)
+      if (!v.valid) { setErrors(p => ({ ...p, [name]: v.error })); return }
+      setErrors(p => { const n = { ...p }; delete n[name]; return n })
+      setFormData(p => ({ ...p, [name]: file }))
+      const reader = new FileReader()
+      reader.onloadend = () => setPreviews(p => ({
+        ...p, [name === 'fotoFrente' ? 'frente' : 'verso']: reader.result
+      }))
+      reader.readAsDataURL(file)
+    } else if (type === 'checkbox') {
+      setFormData(p => ({ ...p, [name]: checked }))
     } else {
-      alert('Senha incorreta!')
+      setFormData(p => ({ ...p, [name]: name === 'whatsapp' ? value.replace(/\D/g, '') : value }))
     }
-  }, [adminPasswordInput, setIsAdmin])
+  }, [setFormData])
 
-  const handleAdminLogout = useCallback(() => {
+  const removeImg = useCallback(name => {
+    setFormData(p => ({ ...p, [name]: null }))
+    setPreviews(p => ({ ...p, [name === 'fotoFrente' ? 'frente' : 'verso']: null }))
+  }, [setFormData])
+
+  const next = useCallback(() => { if (validate()) setStep(p => p + 1) }, [validate])
+  const prev = useCallback(() => setStep(p => p - 1), [])
+
+  const handleSubmit = useCallback(async e => {
+    e.preventDefault()
+    if (!validate() || loading) return
+    setLoading(true)
+    try {
+      const [fr, vr] = await Promise.all([
+        uploadImage(formData.fotoFrente, null, userId),
+        uploadImage(formData.fotoVerso, null, userId)
+      ])
+      if (!fr.success || !vr.success) throw new Error('Falha no upload das imagens')
+      const r = await saveSubmission({
+        nome: formData.nome.trim(),
+        idade: parseInt(formData.idade, 10),
+        email: formData.email.toLowerCase().trim(),
+        whatsapp: formData.whatsapp,
+        foto_frente: fr.url,
+        foto_verso: vr.url
+      }, userId)
+      if (!r.success) throw new Error(r.error)
+      localStorage.setItem('submitted', 'true')
+      localStorage.removeItem('fd')
+      setStep(S.WAITING)
+    } catch (err) {
+      alert(`Erro ao enviar: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [formData, userId, loading, validate])
+
+  const adminLogin = useCallback(() => {
+    const now = Date.now()
+    const lk = getLockout()
+
+    if (lk.lockedUntil > now) {
+      const mins = Math.ceil((lk.lockedUntil - now) / 60000)
+      setAdminError(`Bloqueado. Tente em ${mins} min`)
+      return
+    }
+
+    if (adminPwd === ADMIN_PASSWORD) {
+      const reset = { attempts: 0, lockedUntil: 0 }
+      setLockout(reset)
+      setLockoutState(reset)
+      setAdminSession()
+      setIsAdmin(true)
+      setStep(S.ADMIN)
+      setAdminError('')
+    } else {
+      const attempts = lk.attempts + 1
+      const lockedUntil = attempts >= MAX_ATTEMPTS ? now + 15 * 60 * 1000 : 0
+      const next = { attempts, lockedUntil }
+      setLockout(next)
+      setLockoutState(next)
+      if (attempts >= MAX_ATTEMPTS) {
+        setAdminError('Acesso bloqueado por 15 minutos')
+      } else {
+        setAdminError(`Senha incorreta — ${MAX_ATTEMPTS - attempts} tentativa${MAX_ATTEMPTS - attempts === 1 ? '' : 's'} restante${MAX_ATTEMPTS - attempts === 1 ? '' : 's'}`)
+      }
+    }
+  }, [adminPwd])
+
+  const adminLogout = useCallback(() => {
+    clearAdminSession()
     setIsAdmin(false)
     setSubmissions([])
-    setStep(STEPS.BASIC_INFO)
-  }, [setIsAdmin])
+    setStep(S.INFO)
+  }, [])
 
-  const updateSubmissionStatus = useCallback(
-    async (id, status) => {
-      try {
-        const result = await updateStatus(id, status, userId)
-        if (result.success) {
-          setSubmissions(prev =>
-            prev.map(sub => (sub.id === id ? { ...sub, status } : sub))
-          )
-        } else {
-          throw new Error(result.error)
-        }
-      } catch (error) {
-        alert(`Erro: ${error.message}`)
-      }
-    },
-    [userId]
-  )
+  const updateSub = useCallback(async (id, status) => {
+    const r = await updateStatus(id, status)
+    if (r.success) setSubmissions(p => p.map(s => s.id === id ? { ...s, status } : s))
+    else alert(`Erro: ${r.error}`)
+  }, [])
 
-  const handleDeleteSubmission = useCallback(async id => {
+  const deleteSub = useCallback(async id => {
     if (!confirm('Excluir esta submissão?')) return
-
-    try {
-      const result = await deleteSubmission(id)
-      if (result.success) {
-        setSubmissions(prev => prev.filter(sub => sub.id !== id))
-      } else {
-        throw new Error(result.error)
+    unsubRef.current?.()
+    unsubRef.current = null
+    setSubmissions(prev => prev.filter(s => s.id !== id))
+    const r = await deleteSubmission(id)
+    if (!r.success) {
+      alert(`Erro: ${r.error}`)
+      await loadSubs()
+    }
+    unsubRef.current = subscribeToSubmissions(p => {
+      if (p.eventType === 'INSERT') {
+        setSubmissions(prev => prev.some(s => s.id === p.new.id) ? prev : [p.new, ...prev])
+      } else if (p.eventType === 'UPDATE') {
+        setSubmissions(prev => prev.map(s => s.id === p.new.id ? p.new : s))
+      } else if (p.eventType === 'DELETE') {
+        const deletedId = p.old?.id ?? p.new?.id
+        if (deletedId) setSubmissions(prev => prev.filter(s => s.id !== deletedId))
       }
-    } catch (error) {
-      alert(`Erro ao excluir: ${error.message}`)
+    })
+  }, [loadSubs])
+
+  const deleteAll = useCallback(async () => {
+    if (!confirm('EXCLUIR TODAS AS SUBMISSÕES?')) return
+    unsubRef.current?.()
+    unsubRef.current = null
+    setSubmissions([])
+    const r = await deleteAllSubmissions()
+    if (!r.success) {
+      alert(`Erro: ${r.error}`)
+      await loadSubs()
     }
-  }, [])
-
-  const handleDeleteAll = useCallback(async () => {
-    if (!confirm('⚠️ ATENÇÃO! Isso excluirá TODAS as submissões. Continuar?'))
-      return
-
-    try {
-      const result = await deleteAllSubmissions()
-      if (result.success) {
-        setSubmissions([])
-        alert('✅ Todas as submissões foram excluídas')
-      } else {
-        throw new Error(result.error)
+    unsubRef.current = subscribeToSubmissions(p => {
+      if (p.eventType === 'INSERT') {
+        setSubmissions(prev => prev.some(s => s.id === p.new.id) ? prev : [p.new, ...prev])
+      } else if (p.eventType === 'UPDATE') {
+        setSubmissions(prev => prev.map(s => s.id === p.new.id ? p.new : s))
+      } else if (p.eventType === 'DELETE') {
+        const deletedId = p.old?.id ?? p.new?.id
+        if (deletedId) setSubmissions(prev => prev.filter(s => s.id !== deletedId))
       }
-    } catch (error) {
-      alert(`Erro: ${error.message}`)
+    })
+  }, [loadSubs])
+
+  const copy = useCallback(async text => {
+    try { await navigator.clipboard.writeText(text) }
+    catch {
+      const t = document.createElement('textarea')
+      t.value = text; document.body.appendChild(t); t.select()
+      document.execCommand('copy'); document.body.removeChild(t)
     }
   }, [])
 
-  const copyToClipboard = useCallback(async text => {
-    try {
-      await navigator.clipboard.writeText(text)
-      alert('✅ Copiado!')
-    } catch {
-      const textArea = document.createElement('textarea')
-      textArea.value = text
-      document.body.appendChild(textArea)
-      textArea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textArea)
-      alert('✅ Copiado!')
-    }
-  }, [])
+  /* ── ADMIN ──────────────────────────────── */
+  if (isAdmin && step === S.ADMIN) return (
+    <div className="adm">
+      <div className="adm-crt" />
 
-  // ADMIN PANEL
-  if (isAdmin && step === STEPS.ADMIN_PANEL) {
-    return (
-      <div className='app admin'>
-        <header className='admin-header'>
-          <div className='admin-title'>
-            <h1>🛡️ Painel Admin</h1>
-            <button className='btn-logout' onClick={handleAdminLogout}>
-              Sair
-            </button>
+      <header className="adm-hdr">
+        <div className="adm-hdr-top">
+          <div className="adm-brand">
+            <span className="adm-led" />
+            <span className="adm-prompt">root@davinci<span className="adm-cur">_</span></span>
+            <span className="adm-tag">ADMIN_PANEL</span>
           </div>
+          <button className="adm-logout" onClick={adminLogout}>[logout]</button>
+        </div>
 
-          <div className='admin-stats-grid'>
-            <div className='stat-card'>
-              <span className='stat-value'>{stats.total}</span>
-              <span className='stat-label'>Total</span>
-            </div>
-            <div className='stat-card pending'>
-              <span className='stat-value'>{stats.pendente}</span>
-              <span className='stat-label'>Pendentes</span>
-            </div>
-            <div className='stat-card approved'>
-              <span className='stat-value'>{stats.aprovado}</span>
-              <span className='stat-label'>Aprovados</span>
-            </div>
-            <div className='stat-card rejected'>
-              <span className='stat-value'>{stats.reprovado}</span>
-              <span className='stat-label'>Reprovados</span>
-            </div>
-          </div>
-
-          <div className='admin-actions'>
-            <div className='filter-buttons'>
-              <button
-                className={filterStatus === 'all' ? 'active' : ''}
-                onClick={() => setFilterStatus('all')}
-              >
-                Todos
-              </button>
-              <button
-                className={filterStatus === 'pendente' ? 'active' : ''}
-                onClick={() => setFilterStatus('pendente')}
-              >
-                Pendentes
-              </button>
-              <button
-                className={filterStatus === 'aprovado' ? 'active' : ''}
-                onClick={() => setFilterStatus('aprovado')}
-              >
-                Aprovados
-              </button>
-              <button
-                className={filterStatus === 'reprovado' ? 'active' : ''}
-                onClick={() => setFilterStatus('reprovado')}
-              >
-                Reprovados
-              </button>
-            </div>
-
-            <div className='danger-zone'>
-              <button className='btn-danger' onClick={handleDeleteAll}>
-                🗑️ Excluir Todas
-              </button>
-            </div>
-          </div>
-        </header>
-
-        {imagemModal && (
-          <div className='modal-backdrop' onClick={() => setImagemModal(null)}>
-            <div className='modal-content' onClick={e => e.stopPropagation()}>
-              <button
-                className='modal-close'
-                onClick={() => setImagemModal(null)}
-              >
-                ✕
-              </button>
-              <img src={imagemModal} alt='Documento' />
-            </div>
-          </div>
-        )}
-
-        {submissionsLoading && (
-          <div className='loading'>
-            <div className='spinner'>⏳</div>
-            <p>Carregando...</p>
-          </div>
-        )}
-
-        {filteredSubmissions.length === 0 && !submissionsLoading && (
-          <div className='empty-state'>
-            <p>📋 Nenhuma submissão encontrada</p>
-            <button onClick={loadSubmissions}>🔄 Recarregar</button>
-          </div>
-        )}
-
-        <div className='submissions-grid'>
-          {filteredSubmissions.map(sub => (
-            <div
-              key={sub.id}
-              className={`submission-card status-${sub.status}`}
-            >
-              <div className='card-header'>
-                <h3>{sub.nome}</h3>
-                <div className='card-actions'>
-                  <span className={`badge ${sub.status}`}>
-                    {sub.status.toUpperCase()}
-                  </span>
-                  <button
-                    className='btn-delete-card'
-                    onClick={() => handleDeleteSubmission(sub.id)}
-                    title='Excluir'
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-
-              <div className='card-info'>
-                <div className='info-row'>
-                  <span>📅 {sub.idade} anos</span>
-                  <span>📧 {sub.email}</span>
-                </div>
-                <div className='info-row'>
-                  <span>📱 {sub.whatsapp}</span>
-                  <button
-                    className='btn-copy-inline'
-                    onClick={() => copyToClipboard(sub.whatsapp)}
-                  >
-                    📋
-                  </button>
-                </div>
-                <div className='info-row'>
-                  <small>
-                    🕐 {new Date(sub.created_at).toLocaleString('pt-BR')}
-                  </small>
-                </div>
-              </div>
-
-              <div className='card-images'>
-                <div
-                  className='image-box'
-                  onClick={() => setImagemModal(sub.fotofrente)}
-                >
-                  {sub.fotofrente ? (
-                    <img src={sub.fotofrente} alt='Frente' loading='lazy' />
-                  ) : (
-                    <div className='no-image'>❌</div>
-                  )}
-                  <span className='image-label'>Frente</span>
-                </div>
-                <div
-                  className='image-box'
-                  onClick={() => setImagemModal(sub.fotoverso)}
-                >
-                  {sub.fotoverso ? (
-                    <img src={sub.fotoverso} alt='Verso' loading='lazy' />
-                  ) : (
-                    <div className='no-image'>❌</div>
-                  )}
-                  <span className='image-label'>Verso</span>
-                </div>
-              </div>
-
-              {sub.status === 'pendente' && (
-                <div className='card-buttons'>
-                  <button
-                    className='btn-approve'
-                    onClick={() => updateSubmissionStatus(sub.id, 'aprovado')}
-                  >
-                    ✅ Aprovar
-                  </button>
-                  <button
-                    className='btn-reject'
-                    onClick={() => updateSubmissionStatus(sub.id, 'reprovado')}
-                  >
-                    ❌ Reprovar
-                  </button>
-                </div>
-              )}
+        <div className="adm-stats">
+          {[
+            { k: 'TOTAL', v: stats.total, c: '' },
+            { k: 'PENDING', v: stats.pendente, c: 'w' },
+            { k: 'APPROVED', v: stats.aprovado, c: 'g' },
+            { k: 'REJECTED', v: stats.reprovado, c: 'r' }
+          ].map(({ k, v, c }) => (
+            <div key={k} className={`adm-stat ${c}`}>
+              <span className="adm-stat-v">{v}</span>
+              <span className="adm-stat-k">{k}</span>
             </div>
           ))}
         </div>
-      </div>
-    )
-  }
 
-  // USER INTERFACE
-  return (
-    <div className='app'>
-      <header className='app-header'>
-        <h1>🔞 Verificação +18</h1>
-        <p>DaVinci Comic</p>
-        <button
-          className='btn-admin'
-          onClick={() => setStep(STEPS.ADMIN_LOGIN)}
-          disabled={loading}
-        >
-          🛡️
-        </button>
+        <div className="adm-bar">
+          <div className="adm-filters">
+            {['all', 'pendente', 'aprovado', 'reprovado'].map(f => (
+              <button key={f} className={`adm-f ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>
+                {f === 'all' ? 'ALL' : f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <button className="adm-rmall" onClick={deleteAll}>⌫ Deletar Todas</button>
+        </div>
       </header>
 
-      {step === STEPS.ADMIN_LOGIN && (
-        <div className='step'>
-          <h2>🔐 Login Admin</h2>
-          <div className='form-group'>
-            <input
-              type='password'
-              placeholder='Senha'
-              value={adminPasswordInput}
-              onChange={e => setAdminPasswordInput(e.target.value)}
-              onKeyPress={e => e.key === 'Enter' && handleAdminLogin()}
-            />
-          </div>
-          <div className='form-actions'>
-            <button onClick={handleAdminLogin} disabled={!adminPasswordInput}>
-              Entrar
-            </button>
-            <button
-              className='btn-secondary'
-              onClick={() => setStep(STEPS.BASIC_INFO)}
-            >
-              Voltar
-            </button>
+      {modal && (
+        <div className="adm-modal" onClick={() => setModal(null)}>
+          <div className="adm-modal-box" onClick={e => e.stopPropagation()}>
+            <button className="adm-modal-x" onClick={() => setModal(null)}>✕</button>
+            <img src={modal} alt="doc" />
           </div>
         </div>
       )}
 
-      {step === STEPS.BASIC_INFO && (
-        <div className='step'>
-          <h2>📝 Dados Básicos</h2>
-
-          <div className='form-group'>
-            <input
-              type='text'
-              name='nome'
-              placeholder='Nome completo'
-              value={formData.nome}
-              onChange={handleChange}
-              disabled={loading}
-            />
-            {errors.nome && <span className='error'>❌ {errors.nome}</span>}
-          </div>
-
-          <div className='form-group'>
-            <input
-              type='number'
-              name='idade'
-              placeholder='Idade'
-              value={formData.idade}
-              onChange={handleChange}
-              min={VALIDATION_RULES.MIN_AGE}
-              max={VALIDATION_RULES.MAX_AGE}
-              disabled={loading}
-            />
-            {errors.idade && <span className='error'>❌ {errors.idade}</span>}
-          </div>
-
-          <div className='form-group'>
-            <input
-              type='email'
-              name='email'
-              placeholder='E-mail'
-              value={formData.email}
-              onChange={handleChange}
-              disabled={loading}
-            />
-            {errors.email && <span className='error'>❌ {errors.email}</span>}
-          </div>
-
-          <div className='form-group'>
-            <input
-              type='tel'
-              name='whatsapp'
-              placeholder='WhatsApp (somente números)'
-              value={formData.whatsapp}
-              onChange={handleChange}
-              disabled={loading}
-            />
-            {errors.whatsapp && (
-              <span className='error'>❌ {errors.whatsapp}</span>
-            )}
-          </div>
-
-          <div className='form-actions'>
-            <button onClick={nextStep} disabled={loading}>
-              Próximo →
-            </button>
-          </div>
+      {subsLoading && <div className="adm-state"><span className="adm-cur">&gt; fetching records...</span></div>}
+      {!subsLoading && filtered.length === 0 && (
+        <div className="adm-state">
+          <span>&gt; no records found</span>
+          <button className="adm-btn-outline" onClick={loadSubs}>reload</button>
         </div>
       )}
 
-      {step === STEPS.DOCUMENTS && (
-        <div className='step'>
-          <h2>📄 Documentos</h2>
-
-          <div className='instructions'>
-            <p>📸 Fotos nítidas da frente e verso do documento</p>
-            <ul>
-              <li>✅ Foto com todos os dados visíveis</li>
-              <li>🔒 Pode cobrir CPF se desejar</li>
-              <li>📏 Máximo 3MB por foto</li>
-            </ul>
-          </div>
-
-          <div className='document-upload'>
-            <h4>Frente</h4>
-            {previewFotoFrente ? (
-              <div className='image-preview'>
-                <img src={previewFotoFrente} alt='Frente' />
-                <button
-                  className='btn-remove'
-                  onClick={() => removeImage('fotoFrente')}
-                  disabled={loading}
-                >
-                  🗑️
-                </button>
+      <div className="adm-grid">
+        {filtered.map(sub => (
+          <div key={sub.id} className={`adm-card s-${sub.status}`}>
+            <div className="adm-card-top">
+              <span className="adm-card-name">{sub.nome}</span>
+              <div className="adm-card-top-r">
+                <span className={`adm-badge b-${sub.status}`}>{sub.status.toUpperCase()}</span>
+                <button className="adm-del" onClick={() => deleteSub(sub.id)}>⌫ Deletar</button>
               </div>
-            ) : (
-              <input
-                type='file'
-                name='fotoFrente'
-                accept='image/*'
-                onChange={handleChange}
-                disabled={loading}
-              />
-            )}
-            {errors.fotoFrente && (
-              <span className='error'>❌ {errors.fotoFrente}</span>
-            )}
-          </div>
+            </div>
 
-          <div className='document-upload'>
-            <h4>Verso</h4>
-            {previewFotoVerso ? (
-              <div className='image-preview'>
-                <img src={previewFotoVerso} alt='Verso' />
-                <button
-                  className='btn-remove'
-                  onClick={() => removeImage('fotoVerso')}
-                  disabled={loading}
-                >
-                  🗑️
-                </button>
+            <div className="adm-info">
+              <span>{sub.idade}y · {sub.email}</span>
+              <span className="adm-phone" onClick={() => copy(sub.whatsapp)} title="copiar">
+                {sub.whatsapp} <span className="adm-copy-hint">⎘</span>
+              </span>
+              <span className="adm-ts">{new Date(sub.created_at).toLocaleString('pt-BR')}</span>
+            </div>
+
+            <div className="adm-imgs">
+              {[['fotofrente', 'FRENTE'], ['fotoverso', 'VERSO']].map(([key, lbl]) => (
+                <div key={key} className="adm-thumb" onClick={() => sub[key] && setModal(sub[key])}>
+                  {sub[key] ? <img src={sub[key]} alt={lbl} loading="lazy" /> : <span className="adm-null">NULL</span>}
+                  <span className="adm-lbl">{lbl}</span>
+                </div>
+              ))}
+            </div>
+
+            {sub.status === 'pendente' && (
+              <div className="adm-acts">
+                <button className="adm-ok" onClick={() => updateSub(sub.id, 'aprovado')}>✓ APPROVE</button>
+                <button className="adm-rej" onClick={() => updateSub(sub.id, 'reprovado')}>✗ REJECT</button>
               </div>
-            ) : (
-              <input
-                type='file'
-                name='fotoVerso'
-                accept='image/*'
-                onChange={handleChange}
-                disabled={loading}
-              />
-            )}
-            {errors.fotoVerso && (
-              <span className='error'>❌ {errors.fotoVerso}</span>
             )}
           </div>
+        ))}
+      </div>
+    </div>
+  )
 
-          <div className='form-actions'>
-            <button
-              className='btn-secondary'
-              onClick={prevStep}
-              disabled={loading}
-            >
-              ← Voltar
-            </button>
-            <button onClick={nextStep} disabled={loading}>
-              Próximo →
-            </button>
+  /* ── USER ───────────────────────────────── */
+  const isNumericStep = typeof step === 'number'
+
+  return (
+    <div className="usr">
+      <div className="usr-monitor-bar">
+        <span className="usr-monitor-dot" />
+        <span>Acesso monitorado — dados adulterados resultam em banimento permanente</span>
+        <span className="usr-monitor-dot" />
+      </div>
+
+      <header className="usr-hdr">
+        <div className="usr-hdr-inner">
+          <div className="usr-brand">
+            <div className="usr-logo">
+              <span className="usr-logo-text">18+</span>
+              <div className="usr-logo-ring" />
+            </div>
+            <div className="usr-brand-text">
+              <h1 className="usr-title">DaVinci <span className="usr-title-accent">Comic</span></h1>
+              <span className="usr-sub">✦ Verificação de Acesso +18 ✦</span>
+            </div>
           </div>
+          <button className="usr-gear" onClick={() => setStep(S.ADMIN_LOGIN)} disabled={loading} title="Admin">⚙</button>
         </div>
-      )}
 
-      {step === STEPS.TERMS && (
-        <div className='step'>
-          <h2>📋 Termos</h2>
+        {isNumericStep && (
+          <div className="usr-stepper">
+            {STEP_LABELS.map((label, i) => {
+              const n = i + 1
+              const done = step > n
+              const active = step === n
+              return (
+                <div key={n} className="usr-step-wrap">
+                  <div className={`usr-step ${active ? 'active' : ''} ${done ? 'done' : ''}`}>
+                    <div className="usr-step-dot">{done ? '✓' : n}</div>
+                    <span className="usr-step-lbl">{label}</span>
+                  </div>
+                  {i < STEP_LABELS.length - 1 && (
+                    <div className={`usr-step-connector ${done ? 'done' : ''}`} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </header>
 
-          <div className='terms-content'>
-            <div className='notice'>
-              <h3>🔒 Privacidade</h3>
-              <p>Dados usados apenas para verificação de idade</p>
+      <main className="usr-main">
+
+        {step === S.ADMIN_LOGIN && (() => {
+          const isLocked = lockout.lockedUntil > Date.now()
+          const remaining = MAX_ATTEMPTS - lockout.attempts
+          return (
+            <div className="usr-card fade-in">
+              <div className="usr-card-eyebrow">Sistema</div>
+              <h2 className="usr-card-title">Área restrita</h2>
+              <p className="usr-card-desc">Somente para administradores autorizados.</p>
+              {isLocked && (
+                <div className="usr-lockout-banner">
+                  🔒 Acesso bloqueado temporariamente por múltiplas tentativas incorretas
+                </div>
+              )}
+              <div className="usr-field">
+                <label className="usr-label">
+                  Senha de acesso
+                  {!isLocked && lockout.attempts > 0 && (
+                    <span className="usr-attempts-left"> · {remaining} tentativa{remaining === 1 ? '' : 's'} restante{remaining === 1 ? '' : 's'}</span>
+                  )}
+                </label>
+                <input className={`usr-input ${adminError ? 'err' : ''}`} type="password"
+                  value={adminPwd}
+                  onChange={e => { setAdminPwd(e.target.value); setAdminError('') }}
+                  onKeyDown={e => e.key === 'Enter' && !isLocked && adminLogin()}
+                  placeholder="••••••••" autoFocus disabled={isLocked} />
+                {adminError && <span className="usr-error-msg">{adminError}</span>}
+              </div>
+              <div className="usr-row-btns">
+                <button className="usr-btn-ghost" onClick={() => setStep(S.INFO)}>Voltar</button>
+                <button className="usr-btn-primary" onClick={adminLogin} disabled={!adminPwd || isLocked}>Entrar</button>
+              </div>
             </div>
+          )
+        })()}
 
-            <div className='notice warning'>
-              <h3>⚠️ Aviso</h3>
-              <p>Documentos falsos resultam em banimento permanente</p>
+        {step === S.INFO && (
+          <div className="usr-card fade-in">
+            <div className="usr-card-eyebrow">Passo 1 de 3</div>
+            <h2 className="usr-card-title">Seus dados</h2>
+            <p className="usr-card-desc">Use as informações exatamente como aparecem no seu documento.</p>
+            {[
+              { name: 'nome', type: 'text', label: 'Nome completo', placeholder: 'Igual ao documento' },
+              { name: 'idade', type: 'number', label: 'Idade', placeholder: 'Sua idade atual' },
+              { name: 'email', type: 'email', label: 'E-mail', placeholder: 'seu@email.com' },
+              { name: 'whatsapp', type: 'tel', label: 'WhatsApp', placeholder: 'Somente números' }
+            ].map(({ name, type, label, placeholder }) => (
+              <div key={name} className="usr-field">
+                <label className="usr-label">{label}</label>
+                <input
+                  className={`usr-input ${errors[name] ? 'err' : ''}`}
+                  type={type} name={name} placeholder={placeholder}
+                  value={formData[name]} onChange={handleChange} disabled={loading}
+                />
+                {errors[name] && <span className="usr-error-msg">{errors[name]}</span>}
+              </div>
+            ))}
+            <div className="usr-warn-inline">
+              🛡️ Todos os dados são verificados e monitorados
             </div>
+            <button className="usr-btn-primary full" onClick={next} disabled={loading}>Continuar →</button>
+          </div>
+        )}
 
-            <div className='notice'>
-              <h3>🚀 Aprovação Rápida</h3>
-              <ul>
-                <li>✅ Foto de perfil visível no WhatsApp</li>
-                <li>✅ Solicitação enviada no grupo</li>
-                <li>✅ Fotos nítidas e legíveis</li>
-              </ul>
+        {step === S.DOCS && (
+          <div className="usr-card fade-in">
+            <div className="usr-card-eyebrow">Passo 2 de 3</div>
+            <h2 className="usr-card-title">Documento de identidade</h2>
+            <p className="usr-card-desc">RG ou CNH — frente e verso, foto nítida e legível.</p>
+            <div className="usr-tips">
+              <span>📸 Todos os dados devem estar visíveis</span>
+              <span>🔒 Pode cobrir o CPF se preferir</span>
+              <span>📏 Máximo 3MB por foto · JPG, PNG ou WebP</span>
+            </div>
+            {[
+              { name: 'fotoFrente', label: 'Frente do documento', preview: previews.frente },
+              { name: 'fotoVerso', label: 'Verso do documento', preview: previews.verso }
+            ].map(({ name, label, preview }) => (
+              <div key={name} className="usr-field">
+                <label className="usr-label">{label}</label>
+                {preview ? (
+                  <div className="usr-preview">
+                    <img src={preview} alt={label} />
+                    <button className="usr-btn-remove" onClick={() => removeImg(name)} disabled={loading}>
+                      🗑 Remover foto
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`usr-dropzone ${errors[name] ? 'err' : ''}`}>
+                    <input type="file" name={name} accept="image/*" onChange={handleChange} disabled={loading} hidden />
+                    <span className="usr-dz-icon">📎</span>
+                    <span className="usr-dz-text">Toque para selecionar</span>
+                    <span className="usr-dz-hint">ou arraste a imagem aqui</span>
+                  </label>
+                )}
+                {errors[name] && <span className="usr-error-msg">{errors[name]}</span>}
+              </div>
+            ))}
+            <div className="usr-row-btns">
+              <button className="usr-btn-ghost" onClick={prev} disabled={loading}>← Voltar</button>
+              <button className="usr-btn-primary" onClick={next} disabled={loading}>Continuar →</button>
             </div>
           </div>
+        )}
 
-          <div className='terms-agreement'>
-            <label>
-              <input
-                type='checkbox'
-                name='termosAceitos'
-                checked={formData.termosAceitos}
-                onChange={handleChange}
-                disabled={loading}
-              />
-              Li e aceito os termos
+        {step === S.TERMS && (
+          <div className="usr-card fade-in">
+            <div className="usr-card-eyebrow">Passo 3 de 3 · Quase lá</div>
+            <h2 className="usr-card-title">Termos de uso</h2>
+            <div className="usr-terms">
+              <div className="usr-term">
+                <span className="usr-term-ico">🔒</span>
+                <div>
+                  <strong>Privacidade garantida</strong>
+                  <p>Seus dados são usados exclusivamente para verificação de idade e não são compartilhados.</p>
+                </div>
+              </div>
+              <div className="usr-term warn">
+                <span className="usr-term-ico">⚠️</span>
+                <div>
+                  <strong>Dados adulterados são detectados</strong>
+                  <p>Documentos falsos ou informações incorretas resultam em banimento permanente e reporte às autoridades.</p>
+                </div>
+              </div>
+              <div className="usr-term">
+                <span className="usr-term-ico">⚡</span>
+                <div>
+                  <strong>Aprovação em até 1–2 dias úteis</strong>
+                  <p>Foto de perfil visível no WhatsApp e solicitação no grupo aceleram a análise.</p>
+                </div>
+              </div>
+            </div>
+            <label className="usr-check">
+              <input type="checkbox" name="termosAceitos" checked={formData.termosAceitos} onChange={handleChange} disabled={loading} />
+              <span>Li, entendi e concordo com todos os termos</span>
             </label>
-            {errors.termosAceitos && (
-              <span className='error'>❌ {errors.termosAceitos}</span>
-            )}
-          </div>
-
-          <div className='form-actions'>
-            <button
-              className='btn-secondary'
-              onClick={prevStep}
-              disabled={loading}
-            >
-              ← Voltar
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={loading || !formData.termosAceitos}
-            >
-              {loading ? '⏳ Enviando...' : '🚀 Enviar'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {step === STEPS.WAITING && (
-        <div className='step waiting'>
-          <div className='waiting-content'>
-            <div className='spinner'>⏳</div>
-            <h2>🔍 Analisando</h2>
-            <p>Verificando suas informações...</p>
-            <div className='waiting-info'>
-              <p>⏱️ Tempo: 1-2 dias</p>
-              <p>📱 Status: Aguardando</p>
+            {errors.termosAceitos && <span className="usr-error-msg">{errors.termosAceitos}</span>}
+            <div className="usr-row-btns">
+              <button className="usr-btn-ghost" onClick={prev} disabled={loading}>← Voltar</button>
+              <button className="usr-btn-primary" onClick={handleSubmit} disabled={loading || !formData.termosAceitos}>
+                {loading ? <span className="usr-dots">Enviando<span /><span /><span /></span> : '🚀 Enviar verificação'}
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {step === STEPS.RESULT && (
-        <div className='step waiting'>
-          <div className='waiting-content'>
-            {myResult === 'aprovado' ? (
-              <>
-                <div className='spinner'>✅</div>
-                <h2>🎉 Aprovado!</h2>
-                <p>Sua verificação foi aprovada com sucesso!</p>
-                <div className='waiting-info'>
-                  <p>✅ Você já pode acessar o grupo</p>
-                  <p>📱 Em breve você será adicionado</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className='spinner'>❌</div>
-                <h2>😔 Reprovado</h2>
-                <p>Infelizmente sua verificação foi reprovada.</p>
-                <div className='waiting-info'>
-                  <p>❌ Documentos inválidos ou ilegíveis</p>
-                  <p>📧 Entre em contato para mais informações</p>
-                </div>
-              </>
+        {step === S.WAITING && (
+          <div className="usr-card fade-in usr-center">
+            <div className="usr-waiting-art">
+              <div className="usr-pulse" />
+              <div className="usr-pulse-inner">🔍</div>
+            </div>
+            <h2 className="usr-card-title">Em análise</h2>
+            <p className="usr-card-desc">Verificação enviada com sucesso! Nossa equipe está analisando seus documentos.</p>
+            <div className="usr-status-badge">
+              <span className="usr-status-dot" />
+              Aguardando análise manual
+            </div>
+            <div className="usr-tips mt">
+              <span>⏱ Prazo: 1 a 2 dias úteis</span>
+              <span>💡 Mantenha esta página salva para acompanhar</span>
+            </div>
+          </div>
+        )}
+
+        {step === S.RESULT && (
+          <div className={`usr-card fade-in usr-center`}>
+            <div className={`usr-result-ico ${myResult}`}>
+              {myResult === 'aprovado' ? '✓' : '✗'}
+            </div>
+            <h2 className={`usr-card-title result-title-${myResult}`}>
+              {myResult === 'aprovado' ? '🎉 Verificação aprovada!' : 'Verificação reprovada'}
+            </h2>
+            <p className="usr-card-desc">
+              {myResult === 'aprovado'
+                ? 'Bem-vindo à comunidade DaVinci Comic! Em breve você será adicionado ao grupo.'
+                : 'Seus documentos não passaram na verificação. Entre em contato para mais informações.'}
+            </p>
+            {myResult === 'aprovado' && (
+              <div className="usr-approved-badge">✦ Membro verificado ✦</div>
             )}
           </div>
-        </div>
-      )}
+        )}
+
+      </main>
+
+      <footer className="usr-footer">
+        <span>DaVinci Comic © {new Date().getFullYear()}</span>
+        <span className="usr-footer-dot">·</span>
+        <span>Acesso monitorado e seguro</span>
+      </footer>
     </div>
   )
 }
-
-export default App

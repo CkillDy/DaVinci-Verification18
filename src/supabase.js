@@ -29,7 +29,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024
 // VALIDAÇÃO E COMPRESSÃO
 // ============================================
 
-export function validateImageFile (file) {
+export function validateImageFile(file) {
   if (!file) return { valid: false, error: 'Nenhum arquivo selecionado' }
 
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
@@ -43,7 +43,7 @@ export function validateImageFile (file) {
   return { valid: true }
 }
 
-export async function compressImage (file) {
+export async function compressImage(file) {
   try {
     const validation = validateImageFile(file)
     if (!validation.valid) throw new Error(validation.error)
@@ -65,7 +65,7 @@ export async function compressImage (file) {
   }
 }
 
-function generateUniqueFileName (originalName, userId = null) {
+function generateUniqueFileName(originalName, userId = null) {
   const timestamp = Date.now()
   const random = Math.random().toString(36).substring(2, 8)
   const extension = originalName.split('.').pop()
@@ -77,7 +77,7 @@ function generateUniqueFileName (originalName, userId = null) {
 // UPLOAD
 // ============================================
 
-export async function uploadImage (file, customPath = null, userId = null) {
+export async function uploadImage(file, customPath = null, userId = null) {
   try {
     const compressed = await compressImage(file)
     const fileName = generateUniqueFileName(file.name, userId)
@@ -118,7 +118,7 @@ export async function uploadImage (file, customPath = null, userId = null) {
 // CRUD OPERATIONS
 // ============================================
 
-export async function saveSubmission (data, userId = null) {
+export async function saveSubmission(data, userId = null) {
   try {
     if (!data || typeof data !== 'object') {
       throw new Error('Dados inválidos')
@@ -153,7 +153,7 @@ export async function saveSubmission (data, userId = null) {
   }
 }
 
-export async function fetchSubmissions (options = {}) {
+export async function fetchSubmissions(options = {}) {
   try {
     const { limit = 50, offset = 0, status = null, userId = null } = options
 
@@ -178,14 +178,14 @@ export async function fetchSubmissions (options = {}) {
   }
 }
 
-export async function fetchUserSubmissions (userId, limit = 20) {
+export async function fetchUserSubmissions(userId, limit = 20) {
   if (!userId) {
     return { success: false, error: 'UserID obrigatório', data: [] }
   }
   return fetchSubmissions({ userId, limit })
 }
 
-export async function updateStatus (submissionId, newStatus) {
+export async function updateStatus(submissionId, newStatus) {
   try {
     console.log(`🔄 Atualizando ${submissionId} → ${newStatus}`)
 
@@ -210,11 +210,8 @@ export async function updateStatus (submissionId, newStatus) {
 // 🆕 DELETE OPERATIONS
 // ============================================
 
-export async function deleteSubmission (submissionId) {
+export async function deleteSubmission(submissionId) {
   try {
-    console.log(`🗑️ Excluindo submissão: ${submissionId}`)
-
-    // Busca a submissão para pegar os URLs das imagens
     const { data: submission, error: fetchError } = await supabase
       .from('verificacoes')
       .select('fotofrente, fotoverso')
@@ -223,7 +220,6 @@ export async function deleteSubmission (submissionId) {
 
     if (fetchError) throw new Error(`Erro ao buscar: ${fetchError.message}`)
 
-    // Deleta do banco
     const { error: deleteError } = await supabase
       .from('verificacoes')
       .delete()
@@ -231,98 +227,77 @@ export async function deleteSubmission (submissionId) {
 
     if (deleteError) throw new Error(`Erro ao deletar: ${deleteError.message}`)
 
-    // Tenta deletar as imagens do storage (opcional, não bloqueia)
     if (submission) {
       try {
-        const pathsToDelete = []
-
-        if (submission.fotofrente) {
-          const path = new URL(submission.fotofrente).pathname
-            .split('/')
-            .slice(-2)
-            .join('/')
-          pathsToDelete.push(path)
+        const extractPath = url => {
+          const marker = '/uploads/'
+          const idx = url.indexOf(marker)
+          return idx !== -1 ? decodeURIComponent(url.slice(idx + marker.length).split('?')[0]) : null
         }
 
-        if (submission.fotoverso) {
-          const path = new URL(submission.fotoverso).pathname
-            .split('/')
-            .slice(-2)
-            .join('/')
-          pathsToDelete.push(path)
-        }
+        const pathsToDelete = [submission.fotofrente, submission.fotoverso]
+          .filter(Boolean)
+          .map(extractPath)
+          .filter(Boolean)
 
         if (pathsToDelete.length > 0) {
           await supabase.storage.from('uploads').remove(pathsToDelete)
-          console.log('🗑️ Imagens deletadas do storage')
         }
       } catch (storageError) {
-        console.warn('⚠️ Erro ao deletar imagens (não crítico):', storageError)
+        console.warn('Erro ao deletar imagens (não crítico):', storageError)
       }
     }
 
-    console.log('✅ Submissão excluída')
     return { success: true }
   } catch (error) {
-    console.error('❌ deleteSubmission:', error)
+    console.error('deleteSubmission:', error)
     return { success: false, error: error.message }
   }
 }
 
-export async function deleteAllSubmissions () {
+export async function deleteAllSubmissions() {
   try {
-    console.log('🗑️ Excluindo TODAS as submissões...')
-
-    // Busca todas as submissões para pegar as imagens
     const { data: allSubmissions, error: fetchError } = await supabase
       .from('verificacoes')
       .select('id, fotofrente, fotoverso')
 
     if (fetchError) throw new Error(`Erro ao buscar: ${fetchError.message}`)
 
-    // Deleta todas do banco
+    if (!allSubmissions || allSubmissions.length === 0) {
+      return { success: true, deletedCount: 0 }
+    }
+
+    const ids = allSubmissions.map(s => s.id)
     const { error: deleteError } = await supabase
       .from('verificacoes')
       .delete()
-      .neq('id', 0) // Deleta tudo (workaround para "delete all")
+      .in('id', ids)
 
     if (deleteError) throw new Error(`Erro ao deletar: ${deleteError.message}`)
 
-    // Tenta deletar todas as imagens (não bloqueia se falhar)
-    if (allSubmissions && allSubmissions.length > 0) {
-      try {
-        const pathsToDelete = []
-
-        allSubmissions.forEach(sub => {
-          if (sub.fotofrente) {
-            const path = new URL(sub.fotofrente).pathname
-              .split('/')
-              .slice(-2)
-              .join('/')
-            pathsToDelete.push(path)
-          }
-          if (sub.fotoverso) {
-            const path = new URL(sub.fotoverso).pathname
-              .split('/')
-              .slice(-2)
-              .join('/')
-            pathsToDelete.push(path)
-          }
-        })
-
-        if (pathsToDelete.length > 0) {
-          await supabase.storage.from('uploads').remove(pathsToDelete)
-          console.log(`🗑️ ${pathsToDelete.length} imagens deletadas`)
-        }
-      } catch (storageError) {
-        console.warn('⚠️ Erro ao deletar imagens (não crítico):', storageError)
+    try {
+      const extractPath = url => {
+        const marker = '/uploads/'
+        const idx = url.indexOf(marker)
+        return idx !== -1 ? decodeURIComponent(url.slice(idx + marker.length).split('?')[0]) : null
       }
+
+      const pathsToDelete = allSubmissions
+        .flatMap(s => [s.fotofrente, s.fotoverso])
+        .filter(Boolean)
+        .map(extractPath)
+        .filter(Boolean)
+
+      if (pathsToDelete.length > 0) {
+        await supabase.storage.from('uploads').remove(pathsToDelete)
+      }
+    } catch (storageError) {
+      console.warn('Erro ao deletar imagens (não crítico):', storageError)
     }
 
-    console.log('✅ Todas as submissões excluídas')
-    return { success: true, deletedCount: allSubmissions?.length || 0 }
+    return { success: true, deletedCount: allSubmissions.length }
   } catch (error) {
-    console.error('❌ deleteAllSubmissions:', error)
+    console.error('deleteAllSubmissions:', error)
     return { success: false, error: error.message }
   }
 }
@@ -331,7 +306,7 @@ export async function deleteAllSubmissions () {
 // REAL-TIME SUBSCRIPTIONS
 // ============================================
 
-export function subscribeToSubmissions (callback, options = {}) {
+export function subscribeToSubmissions(callback, options = {}) {
   const { includeRemoved = false } = options
   console.log('📡 Iniciando subscription...')
 
@@ -374,10 +349,10 @@ export function subscribeToSubmissions (callback, options = {}) {
   }
 }
 
-export function subscribeToUserSubmissions (userId, callback) {
+export function subscribeToUserSubmissions(userId, callback) {
   if (!userId) {
     console.error('❌ UserID obrigatório')
-    return () => {}
+    return () => { }
   }
 
   console.log(`📡 User subscription: ${userId}`)
@@ -422,7 +397,7 @@ export function subscribeToUserSubmissions (userId, callback) {
 // UTILIDADES
 // ============================================
 
-export async function testConnection () {
+export async function testConnection() {
   try {
     console.log('🔄 Testando conexão...')
 
